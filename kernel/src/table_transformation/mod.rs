@@ -92,6 +92,8 @@ pub(crate) enum TransformId {
     FeatureSignals,
     /// Enables DomainMetadata writer feature
     DomainMetadata,
+    /// Sets partition columns on metadata
+    Partitioning,
     // Future transforms:
     // ColumnMapping,
     // Clustering,
@@ -284,7 +286,7 @@ impl TransformationPipeline {
     ///
     /// # Steps
     ///
-    /// 1. Get applicable transforms from registry based on properties
+    /// 1. Get applicable transforms from registry based on properties and data layout
     /// 2. Topological sort by dependencies
     /// 3. Apply each transform (with validation)
     /// 4. Run final validation
@@ -294,10 +296,11 @@ impl TransformationPipeline {
     pub(crate) fn apply_transforms(
         config: TableProtocolMetadataConfig,
         properties: &HashMap<String, String>,
+        data_layout: &crate::transaction::data_layout::DataLayout,
     ) -> DeltaResult<TransformOutput> {
-        // Get transforms from registry using raw properties
+        // Get transforms from registry using raw properties and data layout
         // The registry auto-resolves dependencies (e.g., ClusteringTransform -> DomainMetadataTransform)
-        let transforms = TRANSFORM_REGISTRY.select_transforms_to_trigger(properties)?;
+        let transforms = TRANSFORM_REGISTRY.select_transforms_to_trigger(properties, data_layout)?;
 
         // Apply via pipeline
         let mut pipeline = Self::new(transforms);
@@ -758,12 +761,15 @@ mod tests {
 
     #[test]
     fn test_pipeline_rejects_unsupported_feature() {
+        use crate::transaction::data_layout::DataLayout;
+
         // DeletionVectors is not in ALLOWED_DELTA_FEATURES, so should be rejected
         let properties = props([("delta.feature.deletionVectors", "supported")]);
         let config =
             TableProtocolMetadataConfig::new(test_schema(), vec![], properties.clone()).unwrap();
 
-        let result = TransformationPipeline::apply_transforms(config, &properties);
+        let result =
+            TransformationPipeline::apply_transforms(config, &properties, &DataLayout::None);
 
         // Should fail because deletionVectors is not in ALLOWED_DELTA_FEATURES
         assert!(result.is_err());
@@ -775,11 +781,14 @@ mod tests {
 
     #[test]
     fn test_pipeline_with_invalid_version() {
+        use crate::transaction::data_layout::DataLayout;
+
         let properties = props([("delta.minReaderVersion", "1")]);
         let config =
             TableProtocolMetadataConfig::new(test_schema(), vec![], properties.clone()).unwrap();
 
-        let result = TransformationPipeline::apply_transforms(config, &properties);
+        let result =
+            TransformationPipeline::apply_transforms(config, &properties, &DataLayout::None);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("minReaderVersion"));
@@ -787,11 +796,14 @@ mod tests {
 
     #[test]
     fn test_pipeline_with_no_signals() {
+        use crate::transaction::data_layout::DataLayout;
+
         let properties = props([("myapp.version", "1.0")]);
         let config =
             TableProtocolMetadataConfig::new(test_schema(), vec![], properties.clone()).unwrap();
 
-        let result = TransformationPipeline::apply_transforms(config, &properties);
+        let result =
+            TransformationPipeline::apply_transforms(config, &properties, &DataLayout::None);
 
         assert!(result.is_ok());
         let output = result.unwrap();
