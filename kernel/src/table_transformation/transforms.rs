@@ -17,7 +17,7 @@ use crate::{DeltaResult, Error};
 
 use crate::table_protocol_metadata_config::TableProtocolMetadataConfig;
 
-use super::{ProtocolMetadataTransform, TransformId};
+use super::{ProtocolMetadataTransform, TransformId, TransformOutput};
 
 // ============================================================================
 // FeatureSignalTransform
@@ -31,7 +31,6 @@ use super::{ProtocolMetadataTransform, TransformId};
 /// 3. Adds features to the protocol
 /// 4. Strips the signals from metadata (they shouldn't be stored)
 #[derive(Debug)]
-#[allow(dead_code)] // Constructed by registry
 pub(crate) struct FeatureSignalTransform;
 
 impl FeatureSignalTransform {
@@ -93,10 +92,7 @@ impl ProtocolMetadataTransform for FeatureSignalTransform {
         Ok(())
     }
 
-    fn apply(
-        &self,
-        mut config: TableProtocolMetadataConfig,
-    ) -> DeltaResult<TableProtocolMetadataConfig> {
+    fn apply(&self, mut config: TableProtocolMetadataConfig) -> DeltaResult<TransformOutput> {
         // Parse signals from config's metadata
         let signals = Self::parse_feature_signals(config.metadata.configuration())?;
 
@@ -122,7 +118,7 @@ impl ProtocolMetadataTransform for FeatureSignalTransform {
         }
         config.metadata = config.metadata.with_configuration(filtered_config);
 
-        Ok(config)
+        Ok(TransformOutput::new(config))
     }
 }
 
@@ -141,7 +137,6 @@ impl ProtocolMetadataTransform for FeatureSignalTransform {
 /// The transform always runs, whether or not version properties are specified,
 /// because protocol needs a version set. If no properties, defaults to 3/7.
 #[derive(Debug)]
-#[allow(dead_code)] // Constructed by registry
 pub(crate) struct ProtocolVersionTransform;
 
 impl ProtocolMetadataTransform for ProtocolVersionTransform {
@@ -153,10 +148,7 @@ impl ProtocolMetadataTransform for ProtocolVersionTransform {
         "ProtocolVersion: sets version from properties or defaults"
     }
 
-    fn apply(
-        &self,
-        mut config: TableProtocolMetadataConfig,
-    ) -> DeltaResult<TableProtocolMetadataConfig> {
+    fn apply(&self, mut config: TableProtocolMetadataConfig) -> DeltaResult<TransformOutput> {
         let metadata_config = config.metadata.configuration();
 
         // Parse reader version (default to 3 for table features support)
@@ -214,7 +206,7 @@ impl ProtocolMetadataTransform for ProtocolVersionTransform {
         filtered_config.remove(MIN_WRITER_VERSION_PROP);
         config.metadata = config.metadata.with_configuration(filtered_config);
 
-        Ok(config)
+        Ok(TransformOutput::new(config))
     }
 }
 
@@ -234,7 +226,6 @@ impl ProtocolMetadataTransform for ProtocolVersionTransform {
 /// - `delta.minWriterVersion` - Protocol version (processed by ProtocolVersionTransform)
 /// - Non-delta properties (e.g., `myapp.version`) - passed through unmodified
 #[derive(Debug)]
-#[allow(dead_code)] // Constructed by registry
 pub(crate) struct DeltaPropertyValidationTransform;
 
 impl ProtocolMetadataTransform for DeltaPropertyValidationTransform {
@@ -259,11 +250,40 @@ impl ProtocolMetadataTransform for DeltaPropertyValidationTransform {
         Ok(())
     }
 
-    fn apply(
-        &self,
-        config: TableProtocolMetadataConfig,
-    ) -> DeltaResult<TableProtocolMetadataConfig> {
+    fn apply(&self, config: TableProtocolMetadataConfig) -> DeltaResult<TransformOutput> {
         // Validation-only transform - no modifications
-        Ok(config)
+        Ok(TransformOutput::new(config))
+    }
+}
+
+// ============================================================================
+// DomainMetadataTransform
+// ============================================================================
+
+/// Enables the DomainMetadata writer feature.
+///
+/// This transform is added as a dependency when clustering is enabled,
+/// since clustering writes domain metadata.
+#[derive(Debug)]
+pub(crate) struct DomainMetadataTransform;
+
+impl ProtocolMetadataTransform for DomainMetadataTransform {
+    fn id(&self) -> TransformId {
+        TransformId::DomainMetadata
+    }
+
+    fn name(&self) -> &'static str {
+        "DomainMetadata: enables domain metadata feature"
+    }
+
+    fn apply(&self, mut config: TableProtocolMetadataConfig) -> DeltaResult<TransformOutput> {
+        // Add DomainMetadata writer feature
+        if !config
+            .protocol
+            .has_table_feature(&TableFeature::DomainMetadata)
+        {
+            config.protocol = config.protocol.with_feature(TableFeature::DomainMetadata)?;
+        }
+        Ok(TransformOutput::new(config))
     }
 }
